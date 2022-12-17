@@ -5,16 +5,14 @@ import torchaudio
 from torchmetrics.audio.sdr import SignalDistortionRatio
 import torchaudio
 from torch import nn
-# plotting
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import torch.optim as optim
 import random
-
-
-# Load the audio files in teh wavs folder
-import os
 import glob
+import random
+import IPython
+
 
 #%%
 
@@ -29,7 +27,7 @@ for wav in wavs:
 
 def get_chunk(start_time, waveform, sample_rate):
     # Specify the number of seconds for the window and the start time
-    window_seconds = 1
+    window_seconds = 2
     start_time_secs = start_time
 
     window_frames = int(sample_rate * window_seconds)
@@ -47,7 +45,6 @@ def get_chunk(start_time, waveform, sample_rate):
     # Downsample the target to 6kHz
     target = torchaudio.transforms.Resample(sample_rate, 6000)(target)
     return label, target
-    import random
 #%%
 
 USE_CUDA = True
@@ -59,33 +56,32 @@ print("Using device:", DEVICE)
 class Seq2SeqAudioModel(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
         super(Seq2SeqAudioModel, self).__init__()
-        self.mel_spec = torchaudio.transforms.MelSpectrogram(sample_rate=6000)
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1)
         self.encoder = nn.LSTM(input_dim, hidden_dim)
-        self.FCLayer = nn.Linear(hidden_dim, hidden_dim)
-        self.rely = nn.Sigmoid() 
-        self.FC2 = nn.Linear(hidden_dim, hidden_dim)
+        self.mel_spec = torchaudio.transforms.MelSpectrogram(sample_rate=6000)
+        self.relu = nn.ReLU()
         self.decoder = nn.LSTM(hidden_dim, output_dim)
 
     def forward(self, x):
         x, _ = self.encoder(x)
+        x = self.relu(x)
+        x = self.relu(x)
         x, _ = self.decoder(x)
         return x
 
 # 3. Define the model hyperparameters
-input_dim = 6000
-hidden_dim = 3
-output_dim = 6000
+input_dim = 12000
+hidden_dim = 512
+output_dim = 12000
 
 # 4. Instantiate the model
 model = Seq2SeqAudioModel(input_dim, hidden_dim, output_dim)
 
 # 5. Define the loss function and optimizer
-criterion = SignalDistortionRatio()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+criterion = nn.MSELoss()
+optimizer = optim.Adam(model.parameters(), lr=0.1)
 
 # 6. Train the model, checkpoint each 100 epochs
-num_epochs = 100
+num_epochs = 20
 checkpoint = 50
 LOAD = False
 if LOAD:
@@ -93,16 +89,16 @@ if LOAD:
 
 
 
-for epoch in tqdm(range(num_epochs), total=num_epochs, unit="epoch"):
+for epoch in range(num_epochs):
     optimizer.zero_grad()
     waveform, sample_rate = torchaudio.load(random.choice(wavs))
-    label, target = get_chunk(random.randint(0, 0), waveform, sample_rate)
+    label, target = get_chunk(random.randint(0, 120), waveform, sample_rate)
     output = model(label)
     loss = criterion(output, target)
     loss.backward()
     optimizer.step()
     # if we want the loss printed by tqdm, we need to use the following line
-    tqdm.write(f"Epoch: {epoch}, Loss: {loss.item()}")
+    print(f'Epoch: {epoch+1:3}/{num_epochs:3} loss: {loss.item():10.8f}')
     if epoch % checkpoint == 0:
         torch.save(model.state_dict(), 'model.pt')
 
@@ -114,14 +110,11 @@ torch.save(model.state_dict(), 'model.pt')
 # 8. Load the model
 model.load_state_dict(torch.load('model.pt'))
 
-waveform, sample_rate = torchaudio.load(wavs[5])
+waveform, sample_rate = torchaudio.load(wavs[0])
 
-waveform.shape
-# torch.Size([2, 11128320])
-
-window_seconds = 1
+window_seconds = 2
 window_frames = int(sample_rate * window_seconds)
-start_time_secs = 0
+start_time_secs = 100
 start_time_frames = int(sample_rate * start_time_secs)
 # truncate the waveform to 1 second
 label = waveform[:, start_time_frames:start_time_frames + window_frames]
@@ -156,5 +149,7 @@ def plot_label_and_target(label, target):
 output = get_output(label, 5)
 plot_label_and_target(label, output.detach())
 torchaudio.save('output.wav', output.detach(), 6000)
+# play the output
+IPython.display.Audio('output.wav')
 
     
